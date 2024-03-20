@@ -1,5 +1,5 @@
 import './App.css';
-import VegaReactComponent from './weatherwiz';
+import WeatherViz from './weatherwiz';
 
 function App() {
   return (
@@ -8,7 +8,7 @@ function App() {
         <h1>Weather Data Visualization</h1>
       </header>
       <main>
-        <VegaReactComponent />
+        <WeatherViz />
       </main>
     </div>
   );

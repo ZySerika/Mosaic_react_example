@@ -94,6 +94,7 @@ export class SelectionVegaClient extends MosaicClient {
   }
 
   query(filter = []) {
+    console.log("querying");
     return Query.select({
       date: dateMonth("date"),
       precipitation: mean("precipitation"),
@@ -104,6 +105,8 @@ export class SelectionVegaClient extends MosaicClient {
   }
 
   queryResult(data) {
+    console.log("logging");
+    console.log(Array.from(data));
     this.view.data(this.dataset, Array.from(data)).resize().run();
     return this;
   }
