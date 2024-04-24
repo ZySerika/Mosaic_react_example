@@ -10,11 +10,9 @@ yarn create react-app mosaic-weather-app
 cd mosaic-weather-app
 ```
 
-Install dependencies:
+Install dependencies (mosaic-core and mosaic-sql are included in vgplot package).
 ```shell
-npm i @uwdata/mosaic-core
-npm i @uwdata/mosaic-sql
-npm i @uwdata/vgplot`
+npm i @uwdata/vgplot
 ```
 
 To clean the template, replace the default to the following, with a placeholder header:
@@ -38,9 +36,9 @@ function App() {
 export default App;
 ```
 
-We would also want to download the data (csv) file we would want to interact with. Head to [this page](https://github.com/uwdata/mosaic/blob/main/packages/vega-example/public/seattle-weather.csv) and download it into the public folder of our project. 
+We also need to download the data (csv) file we want to interact with. Head to [this page](https://github.com/uwdata/mosaic/blob/main/packages/vega-example/public/seattle-weather.csv) and download it into the public folder of our project. 
 
-Now create a new file in the current directory (or more optimally inside a new "components" folder) named 'weatherwiz.jsx', and write an empty component with React imports we will make use of.
+Now create a new file in the current directory (or inside a new "components" folder) named 'weatherwiz.jsx', and write an empty component with React imports we will make use of.
 
 ```js
 
@@ -58,15 +56,25 @@ Now we are ready to integrate Mosaic packages into our project.
 Since Mosaic uses asynchronous setup, it is best to handle the following logic inside an async helper clause that is called upon initial rendering via useEffect.
 Inside WeatherViz, make the following structure:
 ```js
-const WeatherViz = () => {
+
+const fetchData = async (props) => {
+  return null;
+};
+
+const PlotWeatherData = (props) => {
   useEffect(() => {
-    async function init() {
-      // Setup code
-    }
-    init();
+    // Async setup
+    fetchData(props);
   }, []);
-  return(
+
+  return (
     <div>Hello World!</div>
+  )
+};
+
+const WeatherViz = () => {
+  return(
+    <div>PlotWeatherData </div>
   )
 }
 ```
@@ -79,7 +87,7 @@ import { Selection, coordinator, wasmConnector } from '@uwdata/mosaic-core';
 
 The first thing we will need is a **connector** and a coordinator that connects to it and populate it. In this project we will make use of the wasmConnector. For more information or alternatives visit [this page](https://uwdata.github.io/mosaic/api/core/connectors.html).
 
-Inside the init function, write the following:
+Inside the fetchData function, write the following:
 ```js
 const wasm = await wasmConnector({ log: false });
 coordinator().databaseConnector(wasm);
@@ -95,14 +103,11 @@ But how do we make any visualizations from this asynchronous setup? In order to 
 const plotsRef = useRef(null); 
 
 useEffect(() => {
-  async function init() {
-    // ...
-    const vgspec = null; // The plot spec we will write to
+  fetchData(props).then((vgspec) => {
     if (plotsRef.current) {
       plotsRef.current.replaceChildren(vgspec);
     }
-  }
-  init();
+  });
 }, []);
 
 return(
@@ -189,12 +194,20 @@ At this point, you can select items from the menu to contribute to our Selection
 Create a rectY graph (resembling a histogram) that displays the number of entries corresponding to per month in the year. This is slightly harder to implement, because we do not have an implicit data column that displays numerical months. One thing we could do is to use the [dateMonth](https://uwdata.github.io/mosaic/api/sql/date-functions.html) built-in function to process the column, but that would leave us with ordinal values which is hard to issue draggable queries to (for this, see the [bar](https://uwdata.github.io/mosaic/api/vgplot/marks.html#bar) plot).
 
 For demonstration purposes, we would like to manually issue an SQL clause on data initialization that appends a new column into our database based off our date column.
-After the `coordinator().exec()` line, write another one as follows:
+After the `coordinator().exec()` line, write one of the following clauses to either add a new database or change the existing one.
 ```js
+await coordinator().exec(
+  `CREATE TABLE IF NOT EXISTS weather AS
+    SELECT *, MONTH("date") AS month
+    FROM weathercsv;`
+);
+
+// ALTERNATIVE: change the database directly
 await coordinator().exec(
   `ALTER TABLE weather ADD COLUMN month INT;
     UPDATE weather SET month = MONTH("date");`,
 );
+
 ```
 This simply appends a new column that extracts dates into numerical month values using SQL builtin.
 
@@ -216,6 +229,7 @@ vg.hconcat(
     ),
     vg.intervalX({ as: selection }),
     vg.xyDomain(vg.Fixed),
+    vg.xTicks(12),
     vg.width(350),
     vg.height(240)
   ),
@@ -279,28 +293,41 @@ Here the filter is simply our selection field, and we want to calculate the mean
 After we query for our data, what do we do when we receive it? We use the builtin queryResult(data) function:
 ```js
 queryResult(data) {
-  const dataArray = data.toArray();
-  dataArray.forEach(element => {
-    this.setter(element.precipitation);
-  });
+  this.setter(data.getChild("precipitation").get(0));
   return this;
 }
 ```
-This method is called by the coordinator, meaning that it feeds our data through the argument "data". By default the data is an Apache Arrow Table object. There are various ways to parse it. For official js documentation, see [here](https://arrow.apache.org/docs/js/). A more comprehensive inspiration is Mosaic's own implicit functionlity--see [here](https://github.com/uwdata/mosaic/blob/main/packages/plot/src/marks/util/to-data-array.js).
+This method is called by the coordinator, meaning that it feeds our data through the argument "data". By default the data is an Apache Arrow Table object. There are various ways to parse it. For official js documentation, see [here](https://arrow.apache.org/docs/js/).
 
-In this tutorial, we use the most straightforward way to take the value. Note that we rely on the fact that only one entry will be returned so iterating through each element and calling setters is safe. 
+In this tutorial, we use the most straightforward way to take the value. Note that we rely on the fact that only one entry will be returned.
 
 Now, what is our setter? It is something we want to call and communicate with an external visualization. This is precisely the **setState** function in React that allows us to set a value and re-render the component. 
 Define the state at start of WeatherViz component:
 ```js
-const plotsRef = useRef(null); // prev line
 const [prec, setprec] = useState(null);
 ```
-Then, we create our Client Class and pass the *setprec* handle into it (don't forget to connect it to coordinator):
+Our goal is to make a simple modular UI component PrecipitationDisplay that exists alongside PlotWeatherData. We need to pass the state information to both of them from our WeatherWiz wrapper. Now is also a good time to create the PrecipitationDisplay component.
+```js
+const PrecipitationDisplay = ({ prec }) => {
+  return null
+};
+
+const WeatherViz = () => {
+  const [prec, setprec] = useState(null);
+
+  return (
+    <div>
+      <PlotWeatherData setprec={setprec} /> 
+      <PrecipitationDisplay prec={prec} />
+    </div>
+  );
+}
+```
+Now we can create our Client Class and pass the setprec handle into it (don't forget to connect it to coordinator):
 ```js
 const selection = Selection.intersect(); //prevline
 const statsClient = new CountClient({
-  setprec: setprec,
+  setprec: props.setprec,
   table: "weather",
   filter: selection,
 });
@@ -318,14 +345,8 @@ const precipitationStyle = {
   borderRadius: '4px', // slightly rounded corners
   // You can add more styles to match your visualization style
 };
-
-// Intermediate code
-
 return (
-  <div>
-  <div ref={plotsRef} id="plots"></div>
   <div style={precipitationStyle}>Average Precipitation: {prec ? prec.toFixed(2) : 'None'}</div>
-  </div>
 );
 ```
 We check for prec's null-ness, and render it if it has value. Now, enter the webpage--we should see a clean custom component that displays our average precipitation. Well done!
